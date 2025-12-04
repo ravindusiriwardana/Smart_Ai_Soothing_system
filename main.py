@@ -1,4 +1,6 @@
 import time
+import asyncio
+from threading import Thread
 import sounddevice as sd
 
 from config import CATEGORIES, SAMPLE_RATE, SEGMENT_SIZE
@@ -7,9 +9,23 @@ from rl_agent.q_learning_agent import QLearningAgent
 from audio.audio_utils import AudioBuffer
 from tts_soother.parent_soother import SimpleSoother
 from music.music_player import MusicPlayer
+from websocket_server import server as ws_server
 
 # ===============================
-# Initialize Components
+# 1️⃣ WebSocket Server Thread
+# ===============================
+def run_ws_server():
+    ws_server.start_server(host="0.0.0.0", port=8765)
+
+ws_thread = Thread(target=run_ws_server, daemon=True)
+ws_thread.start()
+
+async def broadcast_emotion(state, confidence):
+    emotion_data = {"emotion": state, "confidence": confidence}
+    await ws_server.broadcast_emotion(emotion_data)
+
+# ===============================
+# 2️⃣ Initialize Components
 # ===============================
 audio_buffer = AudioBuffer(SEGMENT_SIZE)
 cry_model = CryClassifier("./cry_model/cry_lstm_model00.h5", CATEGORIES)
@@ -17,7 +33,7 @@ agent = QLearningAgent(CATEGORIES, ["voice", "music"])
 agent.load("./data/q_table/q_table.pkl")
 
 soother = SimpleSoother(
-    model_name="tts_models/en/ljspeech/glow-tts",  # Use a local or TTS API model
+    model_name="tts_models/en/ljspeech/glow-tts",
     parent_name="Mommy",
     parent_voice_path="./audio/parents_audio/parent_voice_16k.wav"
 )
@@ -25,7 +41,7 @@ soother = SimpleSoother(
 music_player = MusicPlayer()
 
 # ===============================
-# Start Audio Stream
+# 3️⃣ Start Audio Stream
 # ===============================
 stream = sd.InputStream(
     channels=1,
@@ -36,31 +52,34 @@ stream = sd.InputStream(
 stream.start()
 
 # ===============================
-# Main Interaction Loop
+# 4️⃣ Main Loop
 # ===============================
 try:
     while True:
-        time.sleep(10)  # Wait for audio segment to fill
+        time.sleep(10)
         segment = audio_buffer.get_audio_segment()
 
         if len(segment) < SEGMENT_SIZE:
             continue
 
-        # Predict baby's emotion
+        # --- Predict baby's emotion ---
         state, conf = cry_model.predict(segment)
         print(f"Baby state: {state} ({conf*100:.2f}%)")
 
-        # RL agent chooses action
+        # --- Broadcast emotion to mobile app ---
+        asyncio.run(broadcast_emotion(state, conf))
+
+        # --- RL agent chooses action ---
         action = agent.choose_action(state)
 
-        # Execute action
+        # --- Execute action ---
         if action == "voice":
             soother.soothe(state)
         else:
             music_player.play_music(state)
 
-        # Update agent
-        next_state, reward = state, 1  # simple reward logic
+        # --- Update RL agent ---
+        next_state, reward = state, 1
         agent.update(state, action, reward, next_state)
         agent.save("./data/q_table/q_table.pkl")
 
