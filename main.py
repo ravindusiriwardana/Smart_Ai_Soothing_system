@@ -1,5 +1,4 @@
 import time
-import asyncio
 from threading import Thread
 import sounddevice as sd
 
@@ -9,26 +8,26 @@ from rl_agent.q_learning_agent import QLearningAgent
 from audio.audio_utils import AudioBuffer
 from tts_soother.parent_soother import SimpleSoother
 from music.music_player import MusicPlayer
-from websocket_server import server as ws_server
+from websocket_server.server import WebSocketServer
 
 # ===============================
-# 1️⃣ WebSocket Server Thread
+# 1️⃣ Start WebSocket Server (Thread)
 # ===============================
+ws_server = WebSocketServer()
+
 def run_ws_server():
     ws_server.start_server(host="0.0.0.0", port=8765)
 
 ws_thread = Thread(target=run_ws_server, daemon=True)
 ws_thread.start()
 
-async def broadcast_emotion(state, confidence):
-    emotion_data = {"emotion": state, "confidence": confidence}
-    await ws_server.broadcast_emotion(emotion_data)
 
 # ===============================
 # 2️⃣ Initialize Components
 # ===============================
 audio_buffer = AudioBuffer(SEGMENT_SIZE)
 cry_model = CryClassifier("./cry_model/cry_lstm_model00.h5", CATEGORIES)
+
 agent = QLearningAgent(CATEGORIES, ["voice", "music"])
 agent.load("./data/q_table/q_table.pkl")
 
@@ -66,8 +65,11 @@ try:
         state, conf = cry_model.predict(segment)
         print(f"Baby state: {state} ({conf*100:.2f}%)")
 
-        # --- Broadcast emotion to mobile app ---
-        asyncio.run(broadcast_emotion(state, conf))
+        # --- Broadcast to iOS app (thread-safe, no async errors) ---
+        ws_server.broadcast_threadsafe({
+            "emotion": state,
+            "confidence": float(conf)
+        })
 
         # --- RL agent chooses action ---
         action = agent.choose_action(state)
