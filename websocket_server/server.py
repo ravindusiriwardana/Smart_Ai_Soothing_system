@@ -27,9 +27,7 @@ class WebSocketServer:
                 self.clients.remove(websocket)
                 print("❌ Client disconnected")
 
-    # ============================================================
     # 2️⃣ Start WebSocket Server in its OWN event loop (thread-safe)
-    # ============================================================
     def start_server(self, host="0.0.0.0", port=8765):
 
         async def run():
